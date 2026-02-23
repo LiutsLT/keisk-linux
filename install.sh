@@ -14,7 +14,7 @@ chmod +x "$TARGET"
 
 VERSION="unknown"
 if grep -q "^KEISK_VERSION=" "$TARGET" 2>/dev/null; then
-  VERSION="$(grep -m1 "^KEISK_VERSION=" "$TARGET" | cut -d" -f2)"
+  VERSION="$(grep -m1 "^KEISK_VERSION=" "$TARGET" | cut -d'"' -f2)"
 fi
 
 echo "✅ ${MODE}: $TARGET"

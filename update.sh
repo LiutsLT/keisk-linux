@@ -21,7 +21,7 @@ grep -n -- "models auth add --provider" "$ACTIVE_BIN" >/dev/null 2>&1 \
 
 VERSION="unknown"
 if grep -q "^KEISK_VERSION=" "$ACTIVE_BIN" 2>/dev/null; then
-  VERSION="$(grep -m1 "^KEISK_VERSION=" "$ACTIVE_BIN" | cut -d" -f2)"
+  VERSION="$(grep -m1 "^KEISK_VERSION=" "$ACTIVE_BIN" | cut -d'"' -f2)"
 fi
 
 echo "versija(aktyvi): $VERSION"
