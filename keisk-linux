@@ -70,6 +70,16 @@ current_model() {
   eval "$OC models status --plain" 2>/dev/null | head -n1 || true
 }
 
+openai_auth_add_cmd() {
+  # kai kurios OpenClaw versijos nepalaiko --provider models auth add komandoje
+  if eval "$OC models auth add --help" 2>/dev/null | grep -q -- '--provider'; then
+    echo "$OC models auth add --provider openai-codex"
+  else
+    echo "$OC models auth add"
+  fi
+}
+
+
 show_order() {
   local order_line active_profile model_now usage_line
   order_line="$(eval "$OC models auth order get --provider $DEFAULT_PROVIDER" 2>/dev/null | sed -n 's/^Order override: //p' | head -n1)"
@@ -271,7 +281,7 @@ PY
     rm -f "$tmp_before" "$tmp_after"
     return 1
   fi
-  eval "$OC models auth add --provider openai-codex" || { rm -f "$tmp_before" "$tmp_after"; return 1; }
+  eval "$(openai_auth_add_cmd)" || { rm -f "$tmp_before" "$tmp_after"; return 1; }
 
   list_profiles | awk -F'\t' '{print $1}' | sed '/^$/d' | sort > "$tmp_after"
   source_id="$(comm -13 "$tmp_before" "$tmp_after" | head -n1)"
@@ -355,7 +365,7 @@ add_profile_mode() {
     rm -f "$tmp_before" "$tmp_after"
     return 1
   fi
-  eval "$OC models auth add --provider openai-codex" || { rm -f "$tmp_before" "$tmp_after"; return 1; }
+  eval "$(openai_auth_add_cmd)" || { rm -f "$tmp_before" "$tmp_after"; return 1; }
 
   list_profiles | awk -F'\t' '{print $1}' | sed '/^$/d' | sort > "$tmp_after"
   source_id="$(comm -13 "$tmp_before" "$tmp_after" | head -n1)"
