@@ -71,12 +71,8 @@ current_model() {
 }
 
 openai_auth_add_cmd() {
-  # kai kurios OpenClaw versijos nepalaiko --provider models auth add komandoje
-  if eval "$OC models auth add --help" 2>/dev/null | grep -q -- '--provider'; then
-    echo "$OC models auth add --provider openai-codex"
-  else
-    echo "$OC models auth add"
-  fi
+  # konservatyviai: naudojam be --provider (suderinama su senesnėmis versijomis)
+  echo "$OC models auth add"
 }
 
 
