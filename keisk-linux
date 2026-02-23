@@ -340,7 +340,7 @@ add_profile_mode() {
   local name target tmp_before tmp_after source_id
   printf "Ivesk naujo OpenAI profilio pavadinima (pvz: darbo): "
   IFS= read -r name || return 0
-  name="$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9_-.' '-')"
+  name="$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9_.-' '-')"
   name="${name#-}"; name="${name%-}"
   [[ -z "$name" ]] && { echo "Tuscias pavadinimas"; return 1; }
   target="openai-codex:$name"
