@@ -1,0 +1,519 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# keisk-linux
+# Safe OpenClaw auth/model switch helper (no gateway restart)
+
+OC="env -u OPENCLAW_PROFILE -u OPENCLAW_STATE_DIR -u OPENCLAW_CONFIG_PATH openclaw"
+AUTH_FILE="$HOME/.openclaw/agents/main/agent/auth-profiles.json"
+DEFAULT_PROVIDER="openai-codex"
+DEFAULT_OPENROUTER_MODEL="openrouter/arcee-ai/trinity-large-preview:free"
+
+die() { echo "❌ $*" >&2; exit 1; }
+need_cmd() { command -v "$1" >/dev/null 2>&1 || die "Nerasta komanda: $1"; }
+
+need_cmd python3
+need_cmd openclaw
+
+if [[ ! -f "$AUTH_FILE" ]]; then
+  die "Nerastas auth failas: $AUTH_FILE"
+fi
+
+list_profiles() {
+  python3 - "$AUTH_FILE" <<'PY'
+import json, sys, time
+p=sys.argv[1]
+d=json.load(open(p))
+profiles=d.get("profiles",{})
+for k,v in profiles.items():
+    if v.get("provider")=="openai-codex":
+        exp=v.get("expires")
+        rem=""
+        if isinstance(exp,(int,float)):
+            rem_days=(exp-time.time()*1000)/86400000
+            rem=f"{rem_days:.1f}d"
+        print(f"{k}\t{exp if exp else ''}\t{rem}")
+PY
+}
+
+profile_exists() {
+  local id="$1"
+  python3 - "$AUTH_FILE" "$id" <<'PY'
+import json, sys
+d=json.load(open(sys.argv[1]))
+print("yes" if sys.argv[2] in d.get("profiles",{}) else "no")
+PY
+}
+
+set_order() {
+  local first="$1"
+  local second="${2:-}"
+  if [[ -n "$second" ]]; then
+    eval "$OC models auth order set --provider $DEFAULT_PROVIDER $first $second"
+  else
+    eval "$OC models auth order set --provider $DEFAULT_PROVIDER $first"
+  fi
+}
+
+first_other_profile() {
+  local current="$1"
+  while IFS=$'\t' read -r id _ _; do
+    [[ -z "$id" ]] && continue
+    [[ "$id" == "$current" ]] && continue
+    echo "$id"
+    return 0
+  done < <(list_profiles)
+  return 1
+}
+
+current_model() {
+  eval "$OC models status --plain" 2>/dev/null | head -n1 || true
+}
+
+show_order() {
+  local order_line active_profile model_now usage_line
+  order_line="$(eval "$OC models auth order get --provider $DEFAULT_PROVIDER" 2>/dev/null | sed -n 's/^Order override: //p' | head -n1)"
+  model_now="$(current_model)"
+
+  if [[ "$model_now" == openrouter/* ]]; then
+    active_profile="openrouter"
+  else
+    active_profile="${order_line%%,*}"
+    active_profile="${active_profile:-nezinoma}"
+  fi
+
+  local status_txt
+  status_txt="$(eval "$OC models status" 2>/dev/null || true)"
+  if [[ "$model_now" == openrouter/* ]]; then
+    usage_line="$(printf '%s\n' "$status_txt" | sed -n 's/^-[[:space:]]*openrouter usage: /kvota(openrouter): /p' | head -n1)"
+  else
+    usage_line="$(printf '%s\n' "$status_txt" | sed -n 's/^-[[:space:]]*openai-codex usage: /kvota(openai): /p' | head -n1)"
+  fi
+  [[ -z "$usage_line" ]] && usage_line="kvota: n/a"
+
+  echo "== Profiliai =="
+  if ! list_profiles | grep -q .; then
+    echo " (nerasta OpenAI profilių)"
+    echo " Paleisk: openclaw models auth add"
+  fi
+  list_profiles | while IFS=$'\t' read -r id exp rem; do
+    local marker=" "
+    local q="n/a"
+    [[ "$active_profile" != "openrouter" && "$id" == "$active_profile" ]] && marker="A"
+    [[ "$marker" == "A" ]] && q="${usage_line#*: }"
+    printf " %s %-24s | kvota: %-18s | galioja: %-6s\n" "$marker" "$id" "$q" "${rem:-n/a}"
+  done
+  if [[ "$active_profile" == "openrouter" ]]; then
+    echo " A openrouter                 | kvota: ${usage_line#*: } | galioja: n/a"
+  else
+    echo "   openrouter                 | kvota: n/a                | galioja: n/a"
+  fi
+
+  echo
+  echo "== Aktyvu dabar =="
+  echo "profilis: $active_profile"
+  echo "modelis: ${model_now:-n/a}"
+  echo "$usage_line"
+  echo "order(openai): ${order_line:-n/a}"
+  echo "A = aktyvus profilis"
+}
+
+auto_mode() {
+  local fallback="${1:-$DEFAULT_OPENROUTER_MODEL}"
+  local chosen=""
+  local chosen_exp=0
+  local now_ms
+  now_ms=$(python3 - <<'PY'
+import time; print(int(time.time()*1000))
+PY
+)
+
+  while IFS=$'\t' read -r id exp rem; do
+    [[ -z "$id" ]] && continue
+    local exp_num=0
+    if [[ -n "${exp:-}" ]]; then
+      exp_num="$exp"
+    fi
+    if (( exp_num > now_ms && exp_num > chosen_exp )); then
+      chosen="$id"
+      chosen_exp="$exp_num"
+    fi
+  done < <(list_profiles)
+
+  if [[ -n "$chosen" ]]; then
+    local secondary=""
+    secondary="$(first_other_profile "$chosen" || true)"
+
+    set_order "$chosen" "$secondary"
+    eval "$OC models set openai-codex/gpt-5.3-codex" >/dev/null 2>&1 || true
+    echo "✅ AUTO: pasirinktas OpenAI profilis: $chosen"
+    [[ -n "$secondary" ]] && echo "   atsarginis OpenAI: $secondary"
+    echo "   atsarginis modelis: $fallback"
+    return 0
+  fi
+
+  if [[ "$fallback" != openrouter/* ]]; then
+    die "Fallback turi būti openrouter/<modelis>, gavai: $fallback"
+  fi
+
+  eval "$OC models set $fallback"
+  echo "⚠️ AUTO: OpenAI profiliai netinkami, perjungta į fallback modelį: $fallback"
+}
+
+use_mode() {
+  local p="$1"
+  [[ -z "$p" ]] && die "Naudojimas: keisk-linux use <profileId|openrouter/...>"
+  case "$p" in
+    openrouter) p="$DEFAULT_OPENROUTER_MODEL" ;;
+  esac
+
+  if [[ "$p" == openrouter/* ]]; then
+    eval "$OC models set $p"
+    echo "✅ Pagrindinis modelis nustatytas į OpenRouter: $p"
+    return 0
+  fi
+
+  [[ "$(profile_exists "$p")" == "yes" ]] || die "Profilis nerastas: $p"
+
+  local secondary=""
+  secondary="$(first_other_profile "$p" || true)"
+
+  set_order "$p" "$secondary"
+  eval "$OC models set openai-codex/gpt-5.3-codex" >/dev/null 2>&1 || true
+  echo "✅ Nustatytas pirmas OpenAI profilis: $p"
+  [[ -n "$secondary" ]] && echo "   atsarginis OpenAI: $secondary"
+  echo "   atsarginis modelis: $DEFAULT_OPENROUTER_MODEL"
+}
+
+help_msg() {
+  cat <<'EOF'
+keisk-linux - OpenClaw auth helper (Linux)
+
+Komandos:
+  keisk-linux status
+  keisk-linux order
+  keisk-linux auto [openrouter/<modelis>]
+  keisk-linux use <profileId|openrouter/...>
+  keisk-linux add
+  keisk-linux help
+
+Pavyzdžiai:
+  keisk-linux status
+  keisk-linux auto openrouter/moonshotai/kimi-k2
+  keisk-linux use openai-codex:mano-profilis
+  keisk-linux add
+EOF
+}
+
+pick_openai_profile() {
+  local action="$1"
+  PICKED_PROFILE=""
+  local profs=()
+  while IFS= read -r p; do
+    [[ -n "$p" ]] && profs+=("$p")
+  done < <(list_profiles | awk -F'\t' '{print $1}')
+
+  if (( ${#profs[@]} == 0 )); then
+    return 0
+  fi
+
+  echo "Pasirink OpenAI profili $action:"
+  local i=1
+  for p in "${profs[@]}"; do
+    echo "$i) $p"
+    i=$((i+1))
+  done
+  echo "$i) Atgal"
+  printf "> "
+  local ch
+  IFS= read -r ch || return 0
+  if [[ "$ch" =~ ^[0-9]+$ ]]; then
+    if (( ch >= 1 && ch < i )); then
+      PICKED_PROFILE="${profs[$((ch-1))]}"
+    fi
+  fi
+}
+
+edit_profile_mode() {
+  local old target
+  pick_openai_profile "atnaujinimui"
+  old="$PICKED_PROFILE"
+  [[ -z "$old" ]] && { echo "Atšaukta"; return 0; }
+  target="$old"
+
+  printf "Tai perris nauja OAuth prie '%s'. Tęsti? (yes/no): " "$target"
+  local c
+  IFS= read -r c || return 0
+  [[ "$c" == "yes" ]] || { echo "Atšaukta"; return 0; }
+
+  # Remove old profile first (same as remove+add with same name)
+  python3 - "$AUTH_FILE" "$target" <<'PY'
+import json,sys
+path,pid=sys.argv[1:3]
+d=json.load(open(path))
+d.get('profiles',{}).pop(pid,None)
+if 'usageStats' in d and pid in d['usageStats']:
+    d['usageStats'].pop(pid,None)
+with open(path,'w') as f:
+    json.dump(d,f,indent=2)
+    f.write('\n')
+print(f'removed old binding: {pid}')
+PY
+
+  echo "Paleidziu OpenAI auth setup (interactive)..."
+  local tmp_before tmp_after source_id
+  tmp_before="$(mktemp)"
+  tmp_after="$(mktemp)"
+  list_profiles | awk -F'\t' '{print $1}' | sed '/^$/d' | sort > "$tmp_before"
+
+  if [[ ! -t 0 ]]; then
+    echo "⚠️ Reikia interaktyvaus terminalo. Paleisk lokaliai: openclaw models auth add"
+    rm -f "$tmp_before" "$tmp_after"
+    return 1
+  fi
+  eval "$OC models auth add" || { rm -f "$tmp_before" "$tmp_after"; return 1; }
+
+  list_profiles | awk -F'\t' '{print $1}' | sed '/^$/d' | sort > "$tmp_after"
+  source_id="$(comm -13 "$tmp_before" "$tmp_after" | head -n1)"
+  if [[ -z "$source_id" ]]; then
+    source_id="$(list_profiles | awk -F'\t' '{print $1}' | head -n1)"
+  fi
+  [[ -z "$source_id" ]] && { echo "Nepavyko aptikti pridėto OpenAI profilio"; rm -f "$tmp_before" "$tmp_after"; return 1; }
+
+  if [[ "$source_id" != "$target" ]]; then
+    if [[ "$(profile_exists "$source_id")" != "yes" ]]; then
+      echo "Nepavyko aptikti naujo profilio po login"
+      rm -f "$tmp_before" "$tmp_after"
+      return 1
+    fi
+    python3 - "$AUTH_FILE" "$source_id" "$target" <<'PY'
+import json,sys
+p,src,dst=sys.argv[1:4]
+d=json.load(open(p))
+prof=d.get('profiles',{})
+if src not in prof:
+    raise SystemExit('source profile missing')
+prof[dst]=prof[src]
+if src != dst:
+    prof.pop(src,None)
+d['profiles']=prof
+with open(p,'w') as f:
+    json.dump(d,f,indent=2)
+    f.write('\n')
+print(f'rebound: {src} -> {dst}')
+PY
+  fi
+
+  use_mode "$target"
+  rm -f "$tmp_before" "$tmp_after"
+  echo "✅ Profilis atnaujintas (remove+add): $target"
+}
+
+remove_profile_mode() {
+  local p
+  pick_openai_profile "trynimui"
+  p="$PICKED_PROFILE"
+  [[ -z "$p" ]] && { echo "Atšaukta"; return 0; }
+
+  printf "Tikrai istrinti '%s'? (yes/no): " "$p"
+  local c
+  IFS= read -r c || return 0
+  [[ "$c" == "yes" ]] || { echo "Atšaukta"; return 0; }
+
+  python3 - "$AUTH_FILE" "$p" <<'PY'
+import json,sys
+path,pid=sys.argv[1:3]
+d=json.load(open(path))
+d.get('profiles',{}).pop(pid,None)
+if 'usageStats' in d and pid in d['usageStats']:
+    d['usageStats'].pop(pid,None)
+with open(path,'w') as f:
+    json.dump(d,f,indent=2)
+    f.write('\n')
+print(f'removed: {pid}')
+PY
+
+  echo "✅ Profilis istrintas: $p"
+}
+
+add_profile_mode() {
+  local name target tmp_before tmp_after source_id
+  printf "Ivesk naujo OpenAI profilio pavadinima (pvz: darbo): "
+  IFS= read -r name || return 0
+  name="$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9_-.' '-')"
+  name="${name#-}"; name="${name%-}"
+  [[ -z "$name" ]] && { echo "Tuscias pavadinimas"; return 1; }
+  target="openai-codex:$name"
+
+  tmp_before="$(mktemp)"
+  tmp_after="$(mktemp)"
+  list_profiles | awk -F'\t' '{print $1}' | sed '/^$/d' | sort > "$tmp_before"
+
+  echo "Paleidziu OpenAI auth setup (interactive)..."
+  if [[ ! -t 0 ]]; then
+    echo "⚠️ Reikia interaktyvaus terminalo. Paleisk lokaliai: openclaw models auth add"
+    rm -f "$tmp_before" "$tmp_after"
+    return 1
+  fi
+  eval "$OC models auth add" || { rm -f "$tmp_before" "$tmp_after"; return 1; }
+
+  list_profiles | awk -F'\t' '{print $1}' | sed '/^$/d' | sort > "$tmp_after"
+  source_id="$(comm -13 "$tmp_before" "$tmp_after" | head -n1)"
+  if [[ -z "$source_id" ]]; then
+    source_id="$(list_profiles | awk -F'\t' '{print $1}' | head -n1)"
+  fi
+  [[ -z "$source_id" ]] && { echo "Nepavyko aptikti pridėto OpenAI profilio"; rm -f "$tmp_before" "$tmp_after"; return 1; }
+
+  if [[ "$source_id" != "$target" ]]; then
+    if [[ "$(profile_exists "$source_id")" != "yes" ]]; then
+      echo "Nepavyko aptikti naujo profilio po login"
+      rm -f "$tmp_before" "$tmp_after"
+      return 1
+    fi
+    python3 - "$AUTH_FILE" "$source_id" "$target" <<'PY'
+import json,sys
+p,src,dst=sys.argv[1:4]
+d=json.load(open(p))
+prof=d.get('profiles',{})
+if src not in prof:
+    raise SystemExit('source profile missing')
+prof[dst]=prof[src]
+d['profiles']=prof
+with open(p,'w') as f:
+    json.dump(d,f,indent=2)
+    f.write('\n')
+print(f'renamed copy: {src} -> {dst}')
+PY
+  fi
+
+  use_mode "$target"
+  rm -f "$tmp_before" "$tmp_after"
+  echo "✅ Naujas profilis paruostas: $target"
+}
+
+profiles_menu() {
+  while true; do
+    echo
+    echo "== Profiles =="
+    echo "1) Add"
+    echo "2) Remove"
+    echo "3) Edit (rebind OAuth)"
+    echo "4) Atgal"
+    printf "> "
+    IFS= read -r ch || return 0
+    case "$ch" in
+      1) add_profile_mode ;;
+      2) remove_profile_mode ;;
+      3) edit_profile_mode ;;
+      4|x|X|q|Q) return 0 ;;
+      *) echo "Neteisingas pasirinkimas" ;;
+    esac
+  done
+}
+
+manual_menu() {
+  while true; do
+    echo
+    echo "== Manual pasirinkimas =="
+    profs=()
+    while IFS= read -r p; do
+      [[ -n "$p" ]] && profs+=("$p")
+    done < <(list_profiles | awk -F'\t' '{print $1}')
+
+    if (( ${#profs[@]} == 0 )); then
+      echo "Nerasta OpenAI profiliu"
+      return 0
+    fi
+
+    i=1
+    for p in "${profs[@]}"; do
+      [[ -z "$p" ]] && continue
+      echo "$i) $p"
+      i=$((i+1))
+    done
+    openrouter_idx=$i
+    echo "$openrouter_idx) $DEFAULT_OPENROUTER_MODEL (openrouter)"
+    i=$((i+1))
+    echo "$i) Atgal"
+    printf "> "
+    IFS= read -r ch || return 0
+
+    if [[ "$ch" =~ ^[0-9]+$ ]]; then
+      if (( ch >= 1 && ch < openrouter_idx )); then
+        use_mode "${profs[$((ch-1))]}"
+        return 0
+      elif (( ch == openrouter_idx )); then
+        use_mode "$DEFAULT_OPENROUTER_MODEL"
+        return 0
+      elif (( ch == i )); then
+        return 0
+      else
+        echo "Neteisingas pasirinkimas"
+      fi
+    else
+      echo "Neteisingas pasirinkimas"
+    fi
+  done
+}
+
+interactive_menu() {
+  while true; do
+    echo
+    echo "== keisk-linux meniu =="
+    echo "1) Status"
+    echo "2) Manual"
+    echo "3) Auto"
+    echo "4) Profiles"
+    echo "5) Exit"
+    printf "> "
+    IFS= read -r ch || exit 0
+    case "$ch" in
+      1)
+        show_order
+        ;;
+      2)
+        manual_menu
+        ;;
+      3)
+        printf "Ivesk OpenRouter fallback modeli (Enter=$DEFAULT_OPENROUTER_MODEL): "
+        IFS= read -r fb || true
+        auto_mode "${fb:-$DEFAULT_OPENROUTER_MODEL}"
+        ;;
+      4)
+        profiles_menu
+        ;;
+      5|x|X|q|Q)
+        echo "Iki 👋"
+        exit 0
+        ;;
+      *)
+        echo "Neteisingas pasirinkimas"
+        ;;
+    esac
+  done
+}
+
+cmd="${1:-menu}"
+case "$cmd" in
+  menu)
+    interactive_menu
+    ;;
+  status|order)
+    show_order
+    ;;
+  auto)
+    auto_mode "${2:-}"
+    ;;
+  use)
+    use_mode "${2:-}"
+    ;;
+  add)
+    add_profile_mode
+    ;;
+  help|-h|--help)
+    help_msg
+    ;;
+  *)
+    die "Nežinoma komanda: $cmd (bandyk: keisk-linux help)"
+    ;;
+esac
