@@ -8,7 +8,7 @@ OC="env -u OPENCLAW_PROFILE -u OPENCLAW_STATE_DIR -u OPENCLAW_CONFIG_PATH opencl
 AUTH_FILE="$HOME/.openclaw/agents/main/agent/auth-profiles.json"
 DEFAULT_PROVIDER="openai-codex"
 DEFAULT_OPENROUTER_MODEL="openrouter/arcee-ai/trinity-large-preview:free"
-KEISK_VERSION="v0.7 (2026-02-23 09:16 Europe/Vilnius)"
+KEISK_VERSION="v0.8 (2026-02-23 09:34 Europe/Vilnius)"
 
 die() { echo "❌ $*" >&2; exit 1; }
 need_cmd() { command -v "$1" >/dev/null 2>&1 || die "Nerasta komanda: $1"; }
@@ -202,14 +202,14 @@ Komandos:
   keisk-linux order
   keisk-linux auto [openrouter/<modelis>]
   keisk-linux use <profileId|openrouter/...>
-  keisk-linux add
+  keisk-linux rename
   keisk-linux help
 
 Pavyzdžiai:
   keisk-linux status
   keisk-linux auto openrouter/moonshotai/kimi-k2
   keisk-linux use openai-codex:mano-profilis
-  keisk-linux add
+  keisk-linux rename
 EOF
 }
 
@@ -344,73 +344,66 @@ PY
   echo "✅ Profilis istrintas: $p"
 }
 
-add_profile_mode() {
-  local name target tmp_before tmp_after source_id
-  printf "Ivesk naujo OpenAI profilio pavadinima (pvz: darbo): "
+rename_profile_mode() {
+  local source_id name target
+  pick_openai_profile "pervadinimui"
+  source_id="$PICKED_PROFILE"
+  [[ -z "$source_id" ]] && { echo "Atšaukta"; return 0; }
+
+  printf "Ivesk nauja profilio pavadinima (pvz: darbo): "
   IFS= read -r name || return 0
   name="$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9_.-' '-')"
   name="${name#-}"; name="${name%-}"
   [[ -z "$name" ]] && { echo "Tuscias pavadinimas"; return 1; }
   target="openai-codex:$name"
 
-  tmp_before="$(mktemp)"
-  tmp_after="$(mktemp)"
-  list_profiles | awk -F'\t' '{print $1}' | sed '/^$/d' | sort > "$tmp_before"
-
-  echo "Paleidziu OpenAI auth setup (interactive)..."
-  if [[ ! -t 0 ]]; then
-    echo "⚠️ Reikia interaktyvaus terminalo. Paleisk lokaliai: openclaw models auth add"
-    rm -f "$tmp_before" "$tmp_after"
+  if [[ "$target" == "$source_id" ]]; then
+    echo "Pavadinimas nepasikeite"
+    return 0
+  fi
+  if [[ "$(profile_exists "$target")" == "yes" ]]; then
+    echo "Toks profilis jau yra: $target"
     return 1
   fi
-  eval "$(openai_auth_add_cmd)" || { rm -f "$tmp_before" "$tmp_after"; return 1; }
 
-  list_profiles | awk -F'\t' '{print $1}' | sed '/^$/d' | sort > "$tmp_after"
-  source_id="$(comm -13 "$tmp_before" "$tmp_after" | head -n1)"
-  if [[ -z "$source_id" ]]; then
-    source_id="$(list_profiles | awk -F'\t' '{print $1}' | head -n1)"
-  fi
-  [[ -z "$source_id" ]] && { echo "Nepavyko aptikti pridėto OpenAI profilio"; rm -f "$tmp_before" "$tmp_after"; return 1; }
-
-  if [[ "$source_id" != "$target" ]]; then
-    if [[ "$(profile_exists "$source_id")" != "yes" ]]; then
-      echo "Nepavyko aptikti naujo profilio po login"
-      rm -f "$tmp_before" "$tmp_after"
-      return 1
-    fi
-    python3 - "$AUTH_FILE" "$source_id" "$target" <<'PY'
+  python3 - "$AUTH_FILE" "$source_id" "$target" <<'PY'
 import json,sys
 p,src,dst=sys.argv[1:4]
 d=json.load(open(p))
 prof=d.get('profiles',{})
 if src not in prof:
     raise SystemExit('source profile missing')
-prof[dst]=prof[src]
-d['profiles']=prof
+prof[dst]=prof.pop(src)
+if 'usageStats' in d and src in d['usageStats']:
+    d['usageStats'][dst]=d['usageStats'].pop(src)
 with open(p,'w') as f:
     json.dump(d,f,indent=2)
     f.write('\n')
-print(f'renamed copy: {src} -> {dst}')
+print(f'renamed: {src} -> {dst}')
 PY
+
+  current_order="$(eval "$OC models auth order get --provider $DEFAULT_PROVIDER" 2>/dev/null | sed -n 's/^Order override: //p' | head -n1)"
+  if [[ -n "$current_order" ]]; then
+    updated_order="$(printf '%s' "$current_order" | sed "s/$source_id/$target/g")"
+    eval "$OC models auth order set --provider $DEFAULT_PROVIDER $updated_order" >/dev/null 2>&1 || true
   fi
 
   use_mode "$target"
-  rm -f "$tmp_before" "$tmp_after"
-  echo "✅ Naujas profilis paruostas: $target"
+  echo "✅ Profilis pervadintas: $target"
 }
 
 profiles_menu() {
   while true; do
     echo
     echo "== Profiles =="
-    echo "1) Add"
+    echo "1) Rename"
     echo "2) Remove"
     echo "3) Edit (rebind OAuth)"
     echo "4) Atgal"
     printf "> "
     IFS= read -r ch || return 0
     case "$ch" in
-      1) add_profile_mode ;;
+      1) rename_profile_mode ;;
       2) remove_profile_mode ;;
       3) edit_profile_mode ;;
       4|x|X|q|Q) return 0 ;;
@@ -515,8 +508,8 @@ case "$cmd" in
   use)
     use_mode "${2:-}"
     ;;
-  add)
-    add_profile_mode
+  rename)
+    rename_profile_mode
     ;;
   version|-v|--version)
     echo "$KEISK_VERSION"
