@@ -271,7 +271,7 @@ PY
     rm -f "$tmp_before" "$tmp_after"
     return 1
   fi
-  eval "$OC models auth add" || { rm -f "$tmp_before" "$tmp_after"; return 1; }
+  eval "$OC models auth add --provider openai-codex" || { rm -f "$tmp_before" "$tmp_after"; return 1; }
 
   list_profiles | awk -F'\t' '{print $1}' | sed '/^$/d' | sort > "$tmp_after"
   source_id="$(comm -13 "$tmp_before" "$tmp_after" | head -n1)"
@@ -355,7 +355,7 @@ add_profile_mode() {
     rm -f "$tmp_before" "$tmp_after"
     return 1
   fi
-  eval "$OC models auth add" || { rm -f "$tmp_before" "$tmp_after"; return 1; }
+  eval "$OC models auth add --provider openai-codex" || { rm -f "$tmp_before" "$tmp_after"; return 1; }
 
   list_profiles | awk -F'\t' '{print $1}' | sed '/^$/d' | sort > "$tmp_after"
   source_id="$(comm -13 "$tmp_before" "$tmp_after" | head -n1)"
