@@ -268,6 +268,7 @@ print(f'removed old binding: {pid}')
 PY
 
   echo "Paleidziu OpenAI auth setup (interactive)..."
+  echo "➡ Jei matai Token provider meniu: rinkis custom ir ivesk provider id: openai-codex"
   local tmp_before tmp_after source_id
   tmp_before="$(mktemp)"
   tmp_after="$(mktemp)"
@@ -357,6 +358,7 @@ add_profile_mode() {
   list_profiles | awk -F'\t' '{print $1}' | sed '/^$/d' | sort > "$tmp_before"
 
   echo "Paleidziu OpenAI auth setup (interactive)..."
+  echo "➡ Jei matai Token provider meniu: rinkis custom ir ivesk provider id: openai-codex"
   if [[ ! -t 0 ]]; then
     echo "⚠️ Reikia interaktyvaus terminalo. Paleisk lokaliai: openclaw models auth add"
     rm -f "$tmp_before" "$tmp_after"
