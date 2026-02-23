@@ -18,4 +18,4 @@ else
   echo "✅ PATH jau turi $BIN_DIR"
 fi
 
-echo "Paleidimas: keisk status"
+echo "Paleidimas: keisk"

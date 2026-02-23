@@ -18,19 +18,19 @@ mkdir -p ~/.local/bin && curl -fsSL https://raw.githubusercontent.com/LiutsLT/ke
 
 ### Patikra
 ```bash
-keisk status
+keisk
 ```
 
 ## Pirmas paleidimas (be profilių)
 ```bash
 openclaw models auth add
-keisk status
+keisk
 ```
 
 ## Naudojimas
 ```bash
 keisk
-keisk status
+keisk
 keisk use <profileId>
 keisk auto
 keisk auto openrouter/moonshotai/kimi-k2
