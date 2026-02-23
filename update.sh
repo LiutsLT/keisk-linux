@@ -15,18 +15,14 @@ fi
 ACTIVE_BIN="$(command -v keisk)"
 echo "kelias: $ACTIVE_BIN"
 
-grep -n -- "--provider" "$ACTIVE_BIN" >/dev/null 2>&1 \
-  && echo "⚠️ dėmesio: aktyviame faile rastas '--provider'" \
-  || echo "✅ aktyviame faile '--provider' nėra"
+grep -n -- "models auth add --provider" "$ACTIVE_BIN" >/dev/null 2>&1 \
+  && echo "⚠️ aktyviame faile rasta sena komanda su --provider" \
+  || echo "✅ aktyviame faile nėra probleminės --provider komandos"
 
 VERSION="unknown"
-if command -v python3 >/dev/null 2>&1; then
-  VERSION="$(curl -fsSL https://api.github.com/repos/LiutsLT/keisk-linux/commits/main 2>/dev/null | python3 -c 'import sys,json
-try:
- d=json.load(sys.stdin); print((d.get("sha") or "unknown")[:7])
-except Exception:
- print("unknown")')"
+if grep -q "^KEISK_VERSION=" "$ACTIVE_BIN" 2>/dev/null; then
+  VERSION="$(grep -m1 "^KEISK_VERSION=" "$ACTIVE_BIN" | cut -d" -f2)"
 fi
 
-echo "versija(repo main): $VERSION"
+echo "versija(aktyvi): $VERSION"
 echo "Paleidimas: keisk"
