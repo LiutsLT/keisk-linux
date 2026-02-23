@@ -1,19 +1,34 @@
 # keisk-linux
 
-Linux versija OpenClaw auth/model profilių valdymui.
+OpenClaw auth/model profilių valdymo skriptas Linux sistemoms.
 
-## Pirmas paleidimas
+## Diegimas (Linux)
 
+### 1-komanda (public repo)
+```bash
+mkdir -p ~/.local/bin && curl -fsSL https://raw.githubusercontent.com/LiutsLT/keisk-linux/main/keisk-linux -o ~/.local/bin/keisk && chmod +x ~/.local/bin/keisk && echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc && export PATH="$HOME/.local/bin:$PATH"
+```
+
+### Patikra
+```bash
+keisk status
+```
+
+## Pirmas paleidimas (be profilių)
 ```bash
 openclaw models auth add
-chmod +x ./keisk-linux
-./keisk-linux status
+keisk status
 ```
 
 ## Naudojimas
-
 ```bash
-./keisk-linux
-./keisk-linux use <profileId>
-./keisk-linux auto
+keisk
+keisk status
+keisk use <profileId>
+keisk auto
+keisk auto openrouter/moonshotai/kimi-k2
 ```
+
+## Pastabos
+- `Add/Edit` OAuth veikia tik interaktyviame TTY terminale.
+- Jei kvota nerodoma konkrečiam profiliui, gali būti `n/a` (providerio ribojimas).
