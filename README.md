@@ -39,3 +39,17 @@ keisk auto openrouter/moonshotai/kimi-k2
 ## Pastabos
 - `Add/Edit` OAuth veikia tik interaktyviame TTY terminale.
 - Jei kvota nerodoma konkrečiam profiliui, gali būti `n/a` (providerio ribojimas).
+
+
+## Atnaujinimas
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/LiutsLT/keisk-linux/main/update.sh)
+```
+
+Ši komanda:
+- atnaujina `keisk`,
+- parodo aktyvų vykdomą failą (`which keisk`),
+- parodo repo versiją (commit hash),
+- patikrina ar aktyviame faile nėra `--provider`.
+
