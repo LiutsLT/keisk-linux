@@ -8,7 +8,7 @@ OC="env -u OPENCLAW_PROFILE -u OPENCLAW_STATE_DIR -u OPENCLAW_CONFIG_PATH opencl
 AUTH_FILE="$HOME/.openclaw/agents/main/agent/auth-profiles.json"
 DEFAULT_PROVIDER="openai-codex"
 DEFAULT_OPENROUTER_MODEL="openrouter/arcee-ai/trinity-large-preview:free"
-KEISK_VERSION="v0.4 (2026-02-23 08:53 Europe/Vilnius)"
+KEISK_VERSION="v0.5 (2026-02-23 08:57 Europe/Vilnius)"
 
 die() { echo "❌ $*" >&2; exit 1; }
 need_cmd() { command -v "$1" >/dev/null 2>&1 || die "Nerasta komanda: $1"; }
